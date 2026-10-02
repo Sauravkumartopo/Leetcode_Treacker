@@ -4,8 +4,8 @@ services:
     restart: unless-stopped
     environment:
       STUDENT_TRACKER_DB_PATH: /data/leetcode_tracker.db
-      SMTP_USERNAME: ${SMTP_USERNAME:?Set SMTP_USERNAME in .env}
-      SMTP_APP_PASSWORD: ${SMTP_APP_PASSWORD:?Set SMTP_APP_PASSWORD in .env}
+      RESEND_API_KEY: ${RESEND_API_KEY:?Set RESEND_API_KEY in .env}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:-}
     volumes:
       - tracker_data:/data
     security_opt:

@@ -1,17 +1,21 @@
 import hashlib
 import hmac
 import secrets
-import smtplib
-import ssl
-from email.message import EmailMessage
+import requests
 
 
 VERIFICATION_RECIPIENT = 'sktopo26@gmail.com'
+DEFAULT_FROM_ADDRESS = 'LeetCode Student Tracker <onboarding@resend.dev>'
 CODE_ITERATIONS = 100_000
 
 
-class EmailTransportError(Exception):
+class EmailProviderAuthError(Exception):
     pass
+
+
+class EmailProviderResponseError(Exception):
+    def __init__(self, status_code):
+        self.status_code = status_code
 
 
 def create_verification_code():
@@ -36,27 +40,22 @@ def verify_verification_code(code, salt_hex, digest_hex):
     return hmac.compare_digest(actual_digest, expected_digest)
 
 
-def send_verification_email(code, sender, app_password):
-    message = EmailMessage()
-    message['From'] = sender
-    message['To'] = VERIFICATION_RECIPIENT
-    message['Subject'] = 'LeetCode Student Tracker signup verification'
-    message.set_content(
-        f'Your administrator signup verification code is {code}. '
-        'It expires in 10 minutes. If you did not request this code, ignore this email.'
+def send_verification_email(code, api_key, sender):
+    response = requests.post(
+        'https://api.resend.com/emails',
+        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+        json={
+            'from': sender,
+            'to': [VERIFICATION_RECIPIENT],
+            'subject': 'LeetCode Student Tracker signup verification',
+            'text': (
+                f'Your administrator signup verification code is {code}. '
+                'It expires in 10 minutes. If you did not request this code, ignore this email.'
+            ),
+        },
+        timeout=20,
     )
-
-    try:
-        with smtplib.SMTP('smtp.gmail.com', 587, timeout=20) as server:
-            server.ehlo()
-            server.starttls(context=ssl.create_default_context())
-            server.ehlo()
-            server.login(sender, app_password)
-            server.send_message(message)
-    except (OSError, smtplib.SMTPServerDisconnected) as starttls_error:
-        try:
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=20, context=ssl.create_default_context()) as server:
-                server.login(sender, app_password)
-                server.send_message(message)
-        except (OSError, smtplib.SMTPServerDisconnected) as ssl_error:
-            raise EmailTransportError('Gmail SMTP ports 587 and 465 are unavailable') from ssl_error
+    if response.status_code in (401, 403):
+        raise EmailProviderAuthError()
+    if not response.ok:
+        raise EmailProviderResponseError(response.status_code)

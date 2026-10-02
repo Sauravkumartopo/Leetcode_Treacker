@@ -1,5 +1,4 @@
 import os
-import smtplib
 import sqlite3
 import sys
 import time
@@ -18,7 +17,9 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0,str(APP_DIR))
 from password_auth import hash_password, verify_password
 from email_verification import (
-    EmailTransportError,
+    EmailProviderAuthError,
+    EmailProviderResponseError,
+    DEFAULT_FROM_ADDRESS,
     VERIFICATION_RECIPIENT,
     create_verification_code,
     hash_verification_code,
@@ -374,24 +375,22 @@ def reserve_signup_email_slot():
         c.close()
 
 def start_signup_email_verification(username,password=None,password_hash=None):
-    sender=get_app_secret('SMTP_USERNAME')
-    app_password=get_app_secret('SMTP_APP_PASSWORD').replace(' ','')
-    if not sender or not app_password:
-        return None,'Configure SMTP_USERNAME and SMTP_APP_PASSWORD in Streamlit Cloud Secrets first.'
+    api_key=get_app_secret('RESEND_API_KEY')
+    sender=get_app_secret('RESEND_FROM_EMAIL') or DEFAULT_FROM_ADDRESS
+    if not api_key:
+        return None,'Configure RESEND_API_KEY in Streamlit Cloud Secrets first.'
     allowed,retry_after=reserve_signup_email_slot()
     if not allowed:
         return None,f'Please wait {retry_after} seconds before requesting another code.'
     code=create_verification_code()
     try:
-        send_verification_email(code,sender,app_password)
-    except smtplib.SMTPAuthenticationError:
-        return None,'Gmail rejected the sender credentials. Use the sender Gmail address and its 2-Step Verification App Password.'
-    except EmailTransportError:
-        return None,'Could not connect to Gmail SMTP on ports 587 or 465. Check the Cloud logs or use an HTTPS email provider.'
-    except smtplib.SMTPResponseException as error:
-        return None,f'Gmail rejected the email request (SMTP response {error.smtp_code}). Check sender and recipient settings.'
-    except (OSError,smtplib.SMTPException) as error:
-        return None,f'Email delivery failed ({type(error).__name__}). Check Cloud mail settings and logs.'
+        send_verification_email(code,api_key,sender)
+    except EmailProviderAuthError:
+        return None,'Resend rejected the API key. Check RESEND_API_KEY in Streamlit Cloud Secrets.'
+    except EmailProviderResponseError as error:
+        return None,f'Resend rejected the email request (HTTP {error.status_code}). Check the API key and verified sender address.'
+    except requests.RequestException as error:
+        return None,f'Could not reach the Resend HTTPS API ({type(error).__name__}). Check Cloud logs and try again.'
     salt,digest=hash_verification_code(code)
     now=time.time()
     return {
