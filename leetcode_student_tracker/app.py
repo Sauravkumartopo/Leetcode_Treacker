@@ -18,6 +18,7 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0,str(APP_DIR))
 from password_auth import hash_password, verify_password
 from email_verification import (
+    EmailTransportError,
     VERIFICATION_RECIPIENT,
     create_verification_code,
     hash_verification_code,
@@ -383,8 +384,14 @@ def start_signup_email_verification(username,password=None,password_hash=None):
     code=create_verification_code()
     try:
         send_verification_email(code,sender,app_password)
-    except (OSError,smtplib.SMTPException):
-        return None,'The verification email could not be sent. Check the SMTP settings and try again later.'
+    except smtplib.SMTPAuthenticationError:
+        return None,'Gmail rejected the sender credentials. Use the sender Gmail address and its 2-Step Verification App Password.'
+    except EmailTransportError:
+        return None,'Could not connect to Gmail SMTP on ports 587 or 465. Check the Cloud logs or use an HTTPS email provider.'
+    except smtplib.SMTPResponseException as error:
+        return None,f'Gmail rejected the email request (SMTP response {error.smtp_code}). Check sender and recipient settings.'
+    except (OSError,smtplib.SMTPException) as error:
+        return None,f'Email delivery failed ({type(error).__name__}). Check Cloud mail settings and logs.'
     salt,digest=hash_verification_code(code)
     now=time.time()
     return {

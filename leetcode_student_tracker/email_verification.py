@@ -10,6 +10,10 @@ VERIFICATION_RECIPIENT = 'sktopo26@gmail.com'
 CODE_ITERATIONS = 100_000
 
 
+class EmailTransportError(Exception):
+    pass
+
+
 def create_verification_code():
     return f'{secrets.randbelow(1_000_000):06d}'
 
@@ -42,9 +46,17 @@ def send_verification_email(code, sender, app_password):
         'It expires in 10 minutes. If you did not request this code, ignore this email.'
     )
 
-    with smtplib.SMTP('smtp.gmail.com', 587, timeout=20) as server:
-        server.ehlo()
-        server.starttls(context=ssl.create_default_context())
-        server.ehlo()
-        server.login(sender, app_password)
-        server.send_message(message)
+    try:
+        with smtplib.SMTP('smtp.gmail.com', 587, timeout=20) as server:
+            server.ehlo()
+            server.starttls(context=ssl.create_default_context())
+            server.ehlo()
+            server.login(sender, app_password)
+            server.send_message(message)
+    except (OSError, smtplib.SMTPServerDisconnected) as starttls_error:
+        try:
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=20, context=ssl.create_default_context()) as server:
+                server.login(sender, app_password)
+                server.send_message(message)
+        except (OSError, smtplib.SMTPServerDisconnected) as ssl_error:
+            raise EmailTransportError('Gmail SMTP ports 587 and 465 are unavailable') from ssl_error
