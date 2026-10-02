@@ -1,5 +1,6 @@
 import os
 import sqlite3
+import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -9,9 +10,12 @@ import requests
 import streamlit as st
 import plotly.express as px
 from urllib.parse import urlsplit
-from password_auth import verify_password
 
-APP_DIR=Path(__file__).parent
+APP_DIR=Path(__file__).resolve().parent
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0,str(APP_DIR))
+from password_auth import hash_password, verify_password
+
 DB=Path(os.environ.get('STUDENT_TRACKER_DB_PATH', APP_DIR/'leetcode_tracker.db')).expanduser()
 GQL='https://leetcode.com/graphql'
 
@@ -305,6 +309,11 @@ apply_theme(st.session_state.theme)
 def conn():
     DB.parent.mkdir(parents=True,exist_ok=True)
     c=sqlite3.connect(DB,timeout=30)
+    c.execute('''CREATE TABLE IF NOT EXISTS admin_users(
+      account_id INTEGER PRIMARY KEY CHECK(account_id=1),
+      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL)''')
     c.execute('''CREATE TABLE IF NOT EXISTS students(
       student_id TEXT PRIMARY KEY, usn TEXT, name TEXT NOT NULL, section TEXT, batch TEXT,
       leetcode_username TEXT NOT NULL UNIQUE)''')
@@ -544,29 +553,64 @@ elif page=='Analytics':
 
 else:
     st.subheader('🛠️ Data Management'); st.write('Upload CSV columns: `student_id, usn, name, section, batch, leetcode_username`. The username field can contain a username or LeetCode profile URL.')
-    admin_password_hash=os.environ.get('STUDENT_ADMIN_PASSWORD_HASH','').strip()
-    if not admin_password_hash:
-        st.session_state.pop('profile_admin_authorized',None)
-        st.warning('Profile management is locked until STUDENT_ADMIN_PASSWORD_HASH is configured.')
-    if admin_password_hash and st.session_state.get('profile_admin_authorized'):
+    c=conn()
+    admin_account_count=c.execute('SELECT COUNT(*) FROM admin_users').fetchone()[0]
+    c.close()
+    if st.session_state.get('profile_admin_username'):
+        st.success(f"Signed in as {st.session_state['profile_admin_username']}")
         if st.button('Log Out of Profile Management'):
-            st.session_state.pop('profile_admin_authorized',None)
+            st.session_state.pop('profile_admin_username',None)
             st.rerun()
     else:
-        with st.form('profile_admin_login'):
-            entered_password=st.text_input('Administrator Password',type='password')
-            login_admin=st.form_submit_button('Unlock Profile Management')
-        if login_admin:
-            if not admin_password_hash:
-                st.error('Authentication is not configured. Set STUDENT_ADMIN_PASSWORD_HASH and restart the app.')
-            elif verify_password(entered_password,admin_password_hash):
-                st.session_state['profile_admin_authorized']=True
-                st.rerun()
+        if st.session_state.pop('admin_signup_success',False):
+            st.success('Administrator account created. Sign in with your new credentials.')
+        sign_in_tab, sign_up_tab=st.tabs(['Sign In','Sign Up'])
+        with sign_in_tab:
+            with st.form('profile_admin_login'):
+                login_username=st.text_input('Username',key='admin_login_username')
+                login_password=st.text_input('Password',type='password',key='admin_login_password')
+                login_admin=st.form_submit_button('Sign In')
+            if login_admin:
+                c=conn()
+                account=c.execute('SELECT username,password_hash FROM admin_users WHERE username=?',(login_username.strip(),)).fetchone()
+                c.close()
+                if account and verify_password(login_password,account[1]):
+                    st.session_state['profile_admin_username']=account[0]
+                    st.rerun()
+                else:
+                    st.error('Incorrect username or password.')
+        with sign_up_tab:
+            if admin_account_count:
+                st.info('The administrator account is already registered. Sign in to continue.')
             else:
-                st.error('Incorrect administrator password.')
-    profile_admin_authorized=bool(admin_password_hash) and st.session_state.get('profile_admin_authorized',False)
+                st.info('Create the first administrator account. Sign up is disabled after this account is created.')
+                with st.form('profile_admin_signup'):
+                    signup_username=st.text_input('Choose a username',max_chars=64,key='admin_signup_username')
+                    signup_password=st.text_input('Choose a password (at least 12 characters)',type='password',key='admin_signup_password')
+                    signup_confirmation=st.text_input('Confirm password',type='password',key='admin_signup_confirmation')
+                    register_admin=st.form_submit_button('Create Administrator Account')
+                if register_admin:
+                    username=signup_username.strip()
+                    if len(username)<3:
+                        st.error('Username must contain at least 3 characters.')
+                    elif len(signup_password)<12:
+                        st.error('Password must contain at least 12 characters.')
+                    elif signup_password!=signup_confirmation:
+                        st.error('Passwords do not match.')
+                    else:
+                        c=conn()
+                        try:
+                            c.execute('INSERT INTO admin_users(account_id,username,password_hash,created_at) VALUES(1,?,?,?)',(username,hash_password(signup_password),datetime.now(timezone.utc).isoformat()))
+                            c.commit()
+                            st.session_state['admin_signup_success']=True
+                            st.rerun()
+                        except sqlite3.IntegrityError:
+                            st.error('An administrator account already exists or that username is already in use.')
+                        finally:
+                            c.close()
+    profile_admin_authorized=bool(st.session_state.get('profile_admin_username'))
     if not profile_admin_authorized:
-        st.info('Authenticate as an administrator to add, delete, or import student profiles.')
+        st.info('Sign in as the administrator to add, delete, or import student profiles.')
     st.subheader('Add One Student')
     with st.form('add_student_form', clear_on_submit=True):
         generated_student_id=next_student_id()

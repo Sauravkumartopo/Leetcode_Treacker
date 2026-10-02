@@ -1,8 +1,6 @@
-import getpass
 import hashlib
 import hmac
 import secrets
-import sys
 
 
 ALGORITHM = 'pbkdf2_sha256'
@@ -30,12 +28,3 @@ def verify_password(password, encoded_hash):
 
     actual_digest = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, iterations)
     return hmac.compare_digest(actual_digest, expected_digest)
-
-
-if __name__ == '__main__':
-    password = getpass.getpass('Administrator password: ')
-    confirmation = getpass.getpass('Confirm administrator password: ')
-    if not password or password != confirmation:
-        print('Passwords must be non-empty and match.', file=sys.stderr)
-        raise SystemExit(1)
-    print(hash_password(password))

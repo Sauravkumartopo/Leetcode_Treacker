@@ -25,27 +25,18 @@ streamlit run app.py
 ```
 
 ## Deploy on Streamlit Community Cloud
-Community Cloud deploys from GitHub. The simplest repository layout is to make the contents of this `leetcode_student_tracker` folder the repository root, so `app.py` and `requirements.txt` are both at the root. Do not upload `leetcode_tracker.db`, `.env`, or any password/hash into GitHub; `.gitignore` excludes them.
+Community Cloud deploys from GitHub. In this repository, the app and its `requirements.txt` are inside the `leetcode_student_tracker` subdirectory. Do not upload `leetcode_tracker.db`, `.env`, or passwords into GitHub; `.gitignore` excludes them.
 
-1. Create an empty GitHub repository. From PowerShell, in this folder, initialize and push the project (replace the URL with your repository URL):
+1. From the repository root (the folder containing `README.md` and `leetcode_student_tracker`), publish the signup changes to the existing GitHub repository:
 
 ```powershell
-git init
-git add .
-git commit -m "Prepare LeetCode tracker for deployment"
-git branch -M main
-git remote add origin https://github.com/YOUR_ACCOUNT/YOUR_REPOSITORY.git
-git push -u origin main
+git add leetcode_student_tracker/app.py leetcode_student_tracker/password_auth.py leetcode_student_tracker/README.md leetcode_student_tracker/compose.yaml leetcode_student_tracker/.env.example
+git commit -m "Add administrator signup and sign-in"
+git push
 ```
 
-2. Sign in at [share.streamlit.io](https://share.streamlit.io/) with GitHub and choose **Create app**. Select your repository, branch `main`, and main file path `app.py`. The existing `requirements.txt` is beside the entrypoint and will be installed automatically.
-3. Generate the admin hash locally with `py .\password_auth.py`; enter and confirm the password in the terminal. In the app's **Advanced settings** before deployment, or **App settings → Secrets** after deployment, add this TOML setting, replacing the value with the generated hash:
-
-```toml
-STUDENT_ADMIN_PASSWORD_HASH = "pbkdf2_sha256$600000$YOUR_SALT$YOUR_HASH"
-```
-
-4. Deploy or save the settings, then open the app and sign in on **Data Management** using the original password, not the hash.
+2. Sign in at [share.streamlit.io](https://share.streamlit.io/) with GitHub and choose **Create app**. Select your repository, branch `main`, and main file path `leetcode_student_tracker/app.py`. The `requirements.txt` beside the entrypoint will be installed automatically.
+3. Deploy the app. Before initial signup, set app sharing to private if that option is available. Open **Data Management → Sign Up**, create the administrator username and a password of at least 12 characters, then use **Sign In**. Signup closes after the first administrator account is created. No Cloud secret is required for this account flow.
 
 **Protect student data:** the admin password only protects roster changes. The Overview, Students, Leaderboard, and Analytics pages are otherwise visible to anyone who can open the app. Set app sharing to private and verify access while signed out before using real student names or USNs. If private sharing is unavailable for your account, do not deploy identifiable student data publicly without adding viewer authentication.
 
@@ -57,14 +48,12 @@ The Compose deployment runs one Streamlit instance with SQLite on a persistent v
 1. Create a DNS `A` record for your domain pointing to the VPS. Allow inbound TCP ports 80 and 443 (and UDP 443 for HTTP/3) in the provider firewall. Keep SSH access enabled.
 2. Install Docker Engine and the Compose plugin using the [official Ubuntu instructions](https://docs.docker.com/engine/install/ubuntu/).
 3. Push this project to a Git repository, then clone it on the VPS and enter the `leetcode_student_tracker` directory.
-4. Create the protected environment file. Replace the domain with your real DNS name; the password prompts are hidden and the hash is captured directly into `.env`:
+4. Create the protected environment file and replace the domain with your real DNS name:
 
 ```bash
 read -r -p "Public domain: " DOMAIN
-STUDENT_ADMIN_PASSWORD_HASH="$(python3 password_auth.py)" || exit 1
 umask 077
-printf 'DOMAIN=%s\nSTUDENT_ADMIN_PASSWORD_HASH=%s\n' "$DOMAIN" "$STUDENT_ADMIN_PASSWORD_HASH" > .env
-unset STUDENT_ADMIN_PASSWORD_HASH
+printf 'DOMAIN=%s\n' "$DOMAIN" > .env
 ```
 
 5. Start the deployment and check service health:
@@ -77,18 +66,10 @@ docker compose logs -f proxy
 
 Caddy obtains and renews the TLS certificate automatically after DNS resolves and ports 80/443 are reachable. Open `https://your-domain`. Streamlit is not published directly on a host port. The `.env` file is excluded from Git. SQLite and Caddy certificates persist in named Docker volumes; back them up. `docker compose down -v` deletes those volumes and the database. For updates, run `git pull` followed by `docker compose up --build -d`.
 
-The shared admin password is a basic profile-management gate, not individual faculty identity or role-based access. For multiple users or replicas, use PostgreSQL, individual authentication, and managed backups.
+The one-time administrator signup is a basic profile-management gate, not individual faculty identity or role-based access. For multiple accounts or replicas, use PostgreSQL, individual authentication, and managed backups.
 
 ## Student Profile Authorization
-Adding, deleting, and importing student profiles requires an administrator password. The app stores only a salted PBKDF2-SHA256 password hash in the `STUDENT_ADMIN_PASSWORD_HASH` environment variable. Generate a hash in PowerShell from this folder; the password is entered without being echoed:
-
-```powershell
-$hash = py .\password_auth.py
-$env:STUDENT_ADMIN_PASSWORD_HASH = $hash.Trim()
-streamlit run app.py
-```
-
-The generator prompts twice to confirm the password and prints only its salted hash. Keep the hash in a protected environment variable; do not put the original password or hash in source control. The previous plaintext `STUDENT_ADMIN_PASSWORD` setting is no longer used. Without `STUDENT_ADMIN_PASSWORD_HASH`, profile-management actions stay disabled. After login, use **Log Out of Profile Management** to end the authorized session.
+Adding, deleting, and importing student profiles requires an administrator account. On first use, create it in **Data Management → Sign Up**, then sign in. Only one administrator account can be registered; signup closes after it is created. Passwords must be at least 12 characters and are stored as salted PBKDF2-SHA256 hashes in SQLite. Use **Log Out of Profile Management** to end the authorized session. Remove any old `STUDENT_ADMIN_PASSWORD_HASH` secret from Streamlit Cloud settings; it is no longer used.
 
 ## Student CSV
 `student_id,usn,name,section,leetcode_username`

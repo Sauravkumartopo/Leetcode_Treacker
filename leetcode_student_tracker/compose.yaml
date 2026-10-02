@@ -3,7 +3,6 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      STUDENT_ADMIN_PASSWORD_HASH: ${STUDENT_ADMIN_PASSWORD_HASH:?Generate a password hash before deployment}
       STUDENT_TRACKER_DB_PATH: /data/leetcode_tracker.db
     volumes:
       - tracker_data:/data
