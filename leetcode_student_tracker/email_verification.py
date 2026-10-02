@@ -4,7 +4,7 @@ import secrets
 import requests
 
 
-VERIFICATION_RECIPIENT = 'sktopo26@gmail.com'
+VERIFICATION_RECIPIENT = 'sauravkumartopo26@gmail.com'
 DEFAULT_FROM_ADDRESS = 'LeetCode Student Tracker <onboarding@resend.dev>'
 CODE_ITERATIONS = 100_000
 

@@ -36,13 +36,13 @@ git push
 ```
 
 2. Sign in at [share.streamlit.io](https://share.streamlit.io/) with GitHub and choose **Create app**. Select your repository, branch `main`, and main file path `leetcode_student_tracker/app.py`. The `requirements.txt` beside the entrypoint will be installed automatically.
-3. Create a Resend account using `sktopo26@gmail.com`, create an API key, then add it in **App settings → Secrets**:
+3. Create a Resend account using `sauravkumartopo26@gmail.com`, create an API key, then add it in **App settings → Secrets**:
 
 ```toml
 RESEND_API_KEY = "re_..."
 ```
 
-The app uses Resend's `onboarding@resend.dev` sender by default. Resend test sending is limited to the email address on your Resend account, so use `sktopo26@gmail.com` for that account. For a different account or production sender, verify a sending domain in Resend and optionally add `RESEND_FROM_EMAIL = "LeetCode Student Tracker <codes@your-verified-domain.com>"` to Secrets. Delivery uses HTTPS, not SMTP. Before signup, set app sharing to private if available. Each new account submits a username and password, requests a verification code sent to `sktopo26@gmail.com`, and can sign in only after entering that code. The code expires in 10 minutes, allows five attempts, and is rate-limited to one request per minute and five per hour. Signup remains open for additional usernames; every verified account can manage the student roster, so share the app only with trusted users and protect the verification mailbox.
+The app uses Resend's `onboarding@resend.dev` sender by default. Resend test sending is limited to the email address on your Resend account, so use `sauravkumartopo26@gmail.com` for that account. For a different account or production sender, verify a sending domain in Resend and optionally add `RESEND_FROM_EMAIL = "LeetCode Student Tracker <codes@your-verified-domain.com>"` to Secrets. Delivery uses HTTPS, not SMTP. Before signup, set app sharing to private if available. Each new account submits a username and password, requests a verification code sent to `sauravkumartopo26@gmail.com`, and can sign in only after entering that code. The code expires in 10 minutes, allows five attempts, and is rate-limited to one request per minute and five per hour. Signup remains open for additional usernames; every verified account can manage the student roster, so share the app only with trusted users and protect the verification mailbox.
 
 **Protect student data:** the admin password only protects roster changes. The Overview, Students, Leaderboard, and Analytics pages are otherwise visible to anyone who can open the app. Set app sharing to private and verify access while signed out before using real student names or USNs. If private sharing is unavailable for your account, do not deploy identifiable student data publicly without adding viewer authentication.
 
@@ -78,7 +78,7 @@ Caddy obtains and renews the TLS certificate automatically after DNS resolves an
 Email-verified administrator accounts are a basic profile-management gate, not role-based access. Every registered account can manage the roster. For production, use individual roles, PostgreSQL, and managed backups.
 
 ## Student Profile Authorization
-Adding, deleting, and importing student profiles requires a verified account. Every signup sends a six-digit code to `sktopo26@gmail.com`; the account is created only after the code is entered correctly. Codes expire after 10 minutes. The app stores only salted PBKDF2-SHA256 password hashes in SQLite. Use **Log Out of Profile Management** to end the authorized session. Keep the Resend API key in Streamlit Cloud Secrets or the VPS `.env`; never commit it.
+Adding, deleting, and importing student profiles requires a verified account. Every signup sends a six-digit code to `sauravkumartopo26@gmail.com`; the account is created only after the code is entered correctly. Codes expire after 10 minutes. The app stores only salted PBKDF2-SHA256 password hashes in SQLite. Use **Log Out of Profile Management** to end the authorized session. Keep the Resend API key in Streamlit Cloud Secrets or the VPS `.env`; never commit it.
 
 ## Student CSV
 `student_id,usn,name,section,leetcode_username`
