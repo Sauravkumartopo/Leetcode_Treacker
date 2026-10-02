@@ -1,6 +1,8 @@
 import os
+import smtplib
 import sqlite3
 import sys
+import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -15,6 +17,13 @@ APP_DIR=Path(__file__).resolve().parent
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0,str(APP_DIR))
 from password_auth import hash_password, verify_password
+from email_verification import (
+    VERIFICATION_RECIPIENT,
+    create_verification_code,
+    hash_verification_code,
+    send_verification_email,
+    verify_verification_code,
+)
 
 DB=Path(os.environ.get('STUDENT_TRACKER_DB_PATH', APP_DIR/'leetcode_tracker.db')).expanduser()
 GQL='https://leetcode.com/graphql'
@@ -309,11 +318,8 @@ apply_theme(st.session_state.theme)
 def conn():
     DB.parent.mkdir(parents=True,exist_ok=True)
     c=sqlite3.connect(DB,timeout=30)
-    c.execute('''CREATE TABLE IF NOT EXISTS admin_users(
-      account_id INTEGER PRIMARY KEY CHECK(account_id=1),
-      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-      password_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL)''')
+    c.execute('CREATE TABLE IF NOT EXISTS admin_users(account_id INTEGER PRIMARY KEY CHECK(account_id=1), username TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL)')
+    c.execute('CREATE TABLE IF NOT EXISTS signup_email_rate_limit(recipient TEXT PRIMARY KEY, window_started_at REAL NOT NULL, last_sent_at REAL NOT NULL, send_count INTEGER NOT NULL)')
     c.execute('''CREATE TABLE IF NOT EXISTS students(
       student_id TEXT PRIMARY KEY, usn TEXT, name TEXT NOT NULL, section TEXT, batch TEXT,
       leetcode_username TEXT NOT NULL UNIQUE)''')
@@ -335,6 +341,61 @@ def conn():
       student_id TEXT, activity_date TEXT, submissions INTEGER DEFAULT 0,
       accepted INTEGER DEFAULT 0, PRIMARY KEY(student_id,activity_date))''')
     c.commit(); return c
+
+def get_app_secret(name):
+    try:
+        value=st.secrets.get(name,'')
+    except (FileNotFoundError,KeyError):
+        value=''
+    return str(value or os.environ.get(name,'')).strip()
+
+def reserve_signup_email_slot():
+    now=time.time()
+    c=conn()
+    try:
+        c.execute('BEGIN IMMEDIATE')
+        row=c.execute('SELECT window_started_at,last_sent_at,send_count FROM signup_email_rate_limit WHERE recipient=?',(VERIFICATION_RECIPIENT,)).fetchone()
+        if row is None:
+            c.execute('INSERT INTO signup_email_rate_limit VALUES(?,?,?,1)',(VERIFICATION_RECIPIENT,now,now))
+        elif now-row[0]>=3600:
+            c.execute('UPDATE signup_email_rate_limit SET window_started_at=?,last_sent_at=?,send_count=1 WHERE recipient=?',(now,now,VERIFICATION_RECIPIENT))
+        elif now-row[1]<60:
+            c.rollback()
+            return False,max(1,int(60-(now-row[1])))
+        elif row[2]>=5:
+            c.rollback()
+            return False,max(1,int(3600-(now-row[0])))
+        else:
+            c.execute('UPDATE signup_email_rate_limit SET last_sent_at=?,send_count=send_count+1 WHERE recipient=?',(now,VERIFICATION_RECIPIENT))
+        c.commit()
+        return True,0
+    finally:
+        c.close()
+
+def start_signup_email_verification(username,password=None,password_hash=None):
+    sender=get_app_secret('SMTP_USERNAME')
+    app_password=get_app_secret('SMTP_APP_PASSWORD').replace(' ','')
+    if not sender or not app_password:
+        return None,'Configure SMTP_USERNAME and SMTP_APP_PASSWORD in Streamlit Cloud Secrets first.'
+    allowed,retry_after=reserve_signup_email_slot()
+    if not allowed:
+        return None,f'Please wait {retry_after} seconds before requesting another code.'
+    code=create_verification_code()
+    try:
+        send_verification_email(code,sender,app_password)
+    except (OSError,smtplib.SMTPException):
+        return None,'The verification email could not be sent. Check the SMTP settings and try again later.'
+    salt,digest=hash_verification_code(code)
+    now=time.time()
+    return {
+        'username':username,
+        'password_hash':password_hash or hash_password(password),
+        'code_salt':salt,
+        'code_digest':digest,
+        'expires_at':now+600,
+        'sent_at':now,
+        'attempts':0,
+    },None
 
 def seed_demo():
     c=conn()
@@ -564,6 +625,11 @@ else:
     else:
         if st.session_state.pop('admin_signup_success',False):
             st.success('Administrator account created. Sign in with your new credentials.')
+        if st.session_state.pop('clear_signup_inputs',False):
+            for key in ('admin_signup_username','admin_signup_password','admin_signup_confirmation'):
+                st.session_state.pop(key,None)
+        if st.session_state.pop('signup_code_expired',False):
+            st.warning('The verification code expired. Request a new one to continue signup.')
         sign_in_tab, sign_up_tab=st.tabs(['Sign In','Sign Up'])
         with sign_in_tab:
             with st.form('profile_admin_login'):
@@ -583,31 +649,88 @@ else:
             if admin_account_count:
                 st.info('The administrator account is already registered. Sign in to continue.')
             else:
-                st.info('Create the first administrator account. Sign up is disabled after this account is created.')
-                with st.form('profile_admin_signup'):
-                    signup_username=st.text_input('Choose a username',max_chars=64,key='admin_signup_username')
-                    signup_password=st.text_input('Choose a password (at least 12 characters)',type='password',key='admin_signup_password')
-                    signup_confirmation=st.text_input('Confirm password',type='password',key='admin_signup_confirmation')
-                    register_admin=st.form_submit_button('Create Administrator Account')
-                if register_admin:
-                    username=signup_username.strip()
-                    if len(username)<3:
-                        st.error('Username must contain at least 3 characters.')
-                    elif len(signup_password)<12:
-                        st.error('Password must contain at least 12 characters.')
-                    elif signup_password!=signup_confirmation:
-                        st.error('Passwords do not match.')
-                    else:
-                        c=conn()
-                        try:
-                            c.execute('INSERT INTO admin_users(account_id,username,password_hash,created_at) VALUES(1,?,?,?)',(username,hash_password(signup_password),datetime.now(timezone.utc).isoformat()))
-                            c.commit()
-                            st.session_state['admin_signup_success']=True
+                pending_signup=st.session_state.get('pending_admin_signup')
+                if pending_signup and time.time()>=pending_signup['expires_at']:
+                    st.session_state.pop('pending_admin_signup',None)
+                    st.session_state['signup_code_expired']=True
+                    st.rerun()
+                if pending_signup and pending_signup['attempts']>=5:
+                    st.session_state.pop('pending_admin_signup',None)
+                    st.error('Too many incorrect codes. Start signup again to request a new code.')
+                    pending_signup=None
+                if pending_signup:
+                    st.info(f"Enter the six-digit code sent to {VERIFICATION_RECIPIENT}. It expires in 10 minutes.")
+                    with st.form('verify_admin_email_code'):
+                        entered_code=st.text_input('Email verification code',max_chars=6)
+                        verify_code=st.form_submit_button('Verify Code and Create Account')
+                        resend_code=st.form_submit_button('Resend Code')
+                    if resend_code:
+                        new_pending,error=start_signup_email_verification(pending_signup['username'],password_hash=pending_signup['password_hash'])
+                        if error:
+                            st.error(error)
+                        else:
+                            pending_signup.update(new_pending)
+                            st.session_state['pending_admin_signup']=pending_signup
+                            st.success(f'A new verification code was sent to {VERIFICATION_RECIPIENT}.')
                             st.rerun()
-                        except sqlite3.IntegrityError:
-                            st.error('An administrator account already exists or that username is already in use.')
-                        finally:
-                            c.close()
+                    elif verify_code:
+                        if verify_verification_code(entered_code,pending_signup['code_salt'],pending_signup['code_digest']):
+                            c=conn()
+                            account_created=False
+                            account_exists=False
+                            try:
+                                c.execute('BEGIN IMMEDIATE')
+                                account_exists=c.execute('SELECT 1 FROM admin_users LIMIT 1').fetchone() is not None
+                                if not account_exists:
+                                    c.execute('INSERT INTO admin_users(account_id,username,password_hash,created_at) VALUES(1,?,?,?)',(pending_signup['username'],pending_signup['password_hash'],datetime.now(timezone.utc).isoformat()))
+                                    c.commit()
+                                    account_created=True
+                                else:
+                                    c.rollback()
+                            except sqlite3.IntegrityError:
+                                c.rollback()
+                                account_exists=True
+                            finally:
+                                c.close()
+                            if account_created:
+                                st.session_state.pop('pending_admin_signup',None)
+                                st.session_state['admin_signup_success']=True
+                                st.rerun()
+                            if account_exists:
+                                st.session_state.pop('pending_admin_signup',None)
+                                st.error('An administrator account already exists. Sign in to continue.')
+                        else:
+                            pending_signup['attempts']+=1
+                            st.session_state['pending_admin_signup']=pending_signup
+                            if pending_signup['attempts']>=5:
+                                st.session_state.pop('pending_admin_signup',None)
+                                st.error('Too many incorrect codes. Start signup again to request a new code.')
+                            else:
+                                st.error(f"Incorrect code. {5-pending_signup['attempts']} attempt(s) remaining.")
+                else:
+                    st.info('Create the first administrator account. Email verification is required; signup closes after the account is created.')
+                    with st.form('profile_admin_signup'):
+                        signup_username=st.text_input('Choose a username',max_chars=64,key='admin_signup_username')
+                        signup_password=st.text_input('Choose a password (at least 12 characters)',type='password',key='admin_signup_password')
+                        signup_confirmation=st.text_input('Confirm password',type='password',key='admin_signup_confirmation')
+                        request_signup_code=st.form_submit_button('Send Verification Code')
+                    if request_signup_code:
+                        username=signup_username.strip()
+                        if len(username)<3:
+                            st.error('Username must contain at least 3 characters.')
+                        elif len(signup_password)<12:
+                            st.error('Password must contain at least 12 characters.')
+                        elif signup_password!=signup_confirmation:
+                            st.error('Passwords do not match.')
+                        else:
+                            pending_signup,error=start_signup_email_verification(username,signup_password)
+                            if error:
+                                st.error(error)
+                            else:
+                                st.session_state['pending_admin_signup']=pending_signup
+                                st.session_state['clear_signup_inputs']=True
+                                st.success(f'A verification code was sent to {VERIFICATION_RECIPIENT}.')
+                                st.rerun()
     profile_admin_authorized=bool(st.session_state.get('profile_admin_username'))
     if not profile_admin_authorized:
         st.info('Sign in as the administrator to add, delete, or import student profiles.')

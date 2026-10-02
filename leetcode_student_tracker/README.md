@@ -30,13 +30,20 @@ Community Cloud deploys from GitHub. In this repository, the app and its `requir
 1. From the repository root (the folder containing `README.md` and `leetcode_student_tracker`), publish the signup changes to the existing GitHub repository:
 
 ```powershell
-git add leetcode_student_tracker/app.py leetcode_student_tracker/password_auth.py leetcode_student_tracker/README.md leetcode_student_tracker/compose.yaml leetcode_student_tracker/.env.example
-git commit -m "Add administrator signup and sign-in"
+git add leetcode_student_tracker/app.py leetcode_student_tracker/password_auth.py leetcode_student_tracker/email_verification.py leetcode_student_tracker/README.md leetcode_student_tracker/compose.yaml leetcode_student_tracker/.env.example leetcode_student_tracker/.gitignore
+git commit -m "Require email verification for admin signup"
 git push
 ```
 
 2. Sign in at [share.streamlit.io](https://share.streamlit.io/) with GitHub and choose **Create app**. Select your repository, branch `main`, and main file path `leetcode_student_tracker/app.py`. The `requirements.txt` beside the entrypoint will be installed automatically.
-3. Deploy the app. Before initial signup, set app sharing to private if that option is available. Open **Data Management → Sign Up**, create the administrator username and a password of at least 12 characters, then use **Sign In**. Signup closes after the first administrator account is created. No Cloud secret is required for this account flow.
+3. In **App settings → Secrets**, add the Gmail sender account and its Google App Password (not its regular account password):
+
+```toml
+SMTP_USERNAME = "your-sender@gmail.com"
+SMTP_APP_PASSWORD = "your-google-app-password"
+```
+
+Create an App Password from the Google Account security settings; Google requires 2-Step Verification. The verification recipient is fixed to `sktopo26@gmail.com`. Before initial signup, set app sharing to private if available. Open **Data Management → Sign Up**, create the administrator username and a password of at least 12 characters, request the email code, and enter it before creating the account. The code expires in 10 minutes, allows five attempts, and is rate-limited to one request per minute and five per hour. Signup closes after the first administrator account is created.
 
 **Protect student data:** the admin password only protects roster changes. The Overview, Students, Leaderboard, and Analytics pages are otherwise visible to anyone who can open the app. Set app sharing to private and verify access while signed out before using real student names or USNs. If private sharing is unavailable for your account, do not deploy identifiable student data publicly without adding viewer authentication.
 
@@ -52,8 +59,12 @@ The Compose deployment runs one Streamlit instance with SQLite on a persistent v
 
 ```bash
 read -r -p "Public domain: " DOMAIN
+read -r -p "Gmail sender account: " SMTP_USERNAME
+read -r -s -p "Google App Password: " SMTP_APP_PASSWORD
+printf '\n'
 umask 077
-printf 'DOMAIN=%s\n' "$DOMAIN" > .env
+printf 'DOMAIN=%s\nSMTP_USERNAME=%s\nSMTP_APP_PASSWORD=%s\n' "$DOMAIN" "$SMTP_USERNAME" "$SMTP_APP_PASSWORD" > .env
+unset SMTP_APP_PASSWORD
 ```
 
 5. Start the deployment and check service health:
@@ -69,7 +80,7 @@ Caddy obtains and renews the TLS certificate automatically after DNS resolves an
 The one-time administrator signup is a basic profile-management gate, not individual faculty identity or role-based access. For multiple accounts or replicas, use PostgreSQL, individual authentication, and managed backups.
 
 ## Student Profile Authorization
-Adding, deleting, and importing student profiles requires an administrator account. On first use, create it in **Data Management → Sign Up**, then sign in. Only one administrator account can be registered; signup closes after it is created. Passwords must be at least 12 characters and are stored as salted PBKDF2-SHA256 hashes in SQLite. Use **Log Out of Profile Management** to end the authorized session. Remove any old `STUDENT_ADMIN_PASSWORD_HASH` secret from Streamlit Cloud settings; it is no longer used.
+Adding, deleting, and importing student profiles requires the verified administrator account. Signup sends a six-digit code to `sktopo26@gmail.com`; the account is created only after the code is entered correctly. Codes expire after 10 minutes. The app stores only salted PBKDF2-SHA256 password hashes in SQLite. Use **Log Out of Profile Management** to end the authorized session. Keep SMTP credentials in Streamlit Cloud Secrets or the VPS `.env`; never commit them.
 
 ## Student CSV
 `student_id,usn,name,section,leetcode_username`
