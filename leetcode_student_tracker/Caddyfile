@@ -1,0 +1,11 @@
+{$DOMAIN} {
+    encode zstd gzip
+    reverse_proxy tracker:8501
+
+    header {
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        X-Frame-Options "SAMEORIGIN"
+        -Server
+    }
+}
