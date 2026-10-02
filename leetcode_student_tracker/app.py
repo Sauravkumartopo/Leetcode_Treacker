@@ -386,9 +386,13 @@ def start_signup_email_verification(username,password=None,password_hash=None):
     try:
         send_verification_email(code,api_key,sender)
     except EmailProviderAuthError:
-        return None,'Resend rejected the API key. Check RESEND_API_KEY in Streamlit Cloud Secrets.'
+        return None,'Resend rejected the API key (HTTP 401). Check RESEND_API_KEY in Streamlit Cloud Secrets.'
     except EmailProviderResponseError as error:
-        return None,f'Resend rejected the email request (HTTP {error.status_code}). Check the API key and verified sender address.'
+        if error.status_code==403 and error.error_name=='validation_error':
+            return None,'Resend test mode only sends to the email address on your Resend account. The signup recipient is fixed to sktopo26@gmail.com; verify a sending domain in Resend and set RESEND_FROM_EMAIL to use another recipient.'
+        detail=f' ({error.error_name})' if error.error_name else ''
+        message=f': {error.message}' if error.message else ''
+        return None,f'Resend rejected the email request (HTTP {error.status_code}{detail}){message}'
     except requests.RequestException as error:
         return None,f'Could not reach the Resend HTTPS API ({type(error).__name__}). Check Cloud logs and try again.'
     salt,digest=hash_verification_code(code)

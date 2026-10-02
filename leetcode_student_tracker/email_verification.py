@@ -14,8 +14,10 @@ class EmailProviderAuthError(Exception):
 
 
 class EmailProviderResponseError(Exception):
-    def __init__(self, status_code):
+    def __init__(self, status_code, error_name='', message=''):
         self.status_code = status_code
+        self.error_name = error_name
+        self.message = message
 
 
 def create_verification_code():
@@ -55,7 +57,15 @@ def send_verification_email(code, api_key, sender):
         },
         timeout=20,
     )
-    if response.status_code in (401, 403):
+    if response.status_code == 401:
         raise EmailProviderAuthError()
     if not response.ok:
-        raise EmailProviderResponseError(response.status_code)
+        try:
+            error_payload = response.json()
+        except ValueError:
+            error_payload = {}
+        raise EmailProviderResponseError(
+            response.status_code,
+            str(error_payload.get('name', ''))[:80],
+            str(error_payload.get('message', ''))[:240],
+        )
